@@ -1,6 +1,7 @@
 import { Backend, NetworkProfile, Platform } from '../types';
 import {
   runSudoCommand,
+  runSudoCommandSync,
   bpsToRate,
   msToTime,
   percentToString,
@@ -9,6 +10,7 @@ import {
   checkRoot,
   getDefaultInterface,
   sleep,
+  ExecSyncResult,
 } from '../utils';
 import { getChildPids, getCgroupControllerPath, processExists, getProcessPorts } from '../process';
 
@@ -681,6 +683,224 @@ export class LinuxBackend implements Backend {
 
     try {
       await runSudoCommand('rmdir', [cgroupPath]);
+    } catch {
+      // Cgroup may not be empty or already removed
+    }
+  }
+
+  cleanupSync(): void {
+    if (!this.config) {
+      return;
+    }
+
+    const {
+      cgroupPath,
+      net_clsPath,
+      iface,
+      egress,
+      ingress,
+      iptablesRules,
+      pids,
+    } = this.config;
+
+    try {
+      this.cleanupIptablesSync(iptablesRules);
+    } catch (e) {
+      this.logCleanupError('iptables', e);
+    }
+
+    try {
+      if (ingress) {
+        this.cleanupIngressSync(iface, ingress);
+      }
+    } catch (e) {
+      this.logCleanupError('ingress', e);
+    }
+
+    try {
+      if (egress) {
+        this.cleanupEgressSync(iface, egress);
+      }
+    } catch (e) {
+      this.logCleanupError('egress', e);
+    }
+
+    try {
+      this.cleanupCgroupSync(cgroupPath, net_clsPath, pids);
+    } catch (e) {
+      this.logCleanupError('cgroup', e);
+    }
+
+    this.config = null;
+  }
+
+  private logCleanupError(component: string, error: unknown): void {
+    try {
+      const msg = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[netslim] cleanup warning (${component}): ${msg}\n`);
+    } catch {
+      // If even stderr.write fails, just swallow
+    }
+  }
+
+  private cleanupIptablesSync(rules: string[]): void {
+    for (const rule of rules) {
+      try {
+        const parts = rule.split(' ');
+        const table = parts[0];
+        const chain = parts[1];
+        const ruleArgs = ['-t', table, '-D', chain, ...parts.slice(2)];
+        runSudoCommandSync('iptables', ruleArgs);
+      } catch {
+        // Rule may already be gone
+      }
+    }
+  }
+
+  private cleanupEgressSync(iface: string, egress: EgressConfig): void {
+    const { rootQdiscHandle, classId, netemHandle, filterPrio, weCreatedRootQdisc } = egress;
+
+    try {
+      runSudoCommandSync('tc', [
+        'filter', 'del', 'dev', iface, 'parent', rootQdiscHandle,
+        'prio', filterPrio.toString()
+      ]);
+    } catch {
+      // Filter may already be gone
+    }
+
+    try {
+      runSudoCommandSync('tc', [
+        'qdisc', 'del', 'dev', iface, 'parent', classId, 'handle', netemHandle
+      ]);
+    } catch {
+      // Netem may not exist
+    }
+
+    try {
+      runSudoCommandSync('tc', [
+        'class', 'del', 'dev', iface, 'parent', rootQdiscHandle, 'classid', classId
+      ]);
+    } catch {
+      // Class may already be gone
+    }
+
+    if (weCreatedRootQdisc) {
+      try {
+        const classesResult = runSudoCommandSync('tc', ['class', 'show', 'dev', iface, 'parent', rootQdiscHandle]);
+        const classCount = (classesResult.stdout.match(/class\s+\S+:\d+/g) || []).length;
+
+        if (classCount <= 1) {
+          runSudoCommandSync('tc', ['qdisc', 'del', 'dev', iface, 'root']);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  private cleanupIngressSync(iface: string, ingress: IngressConfig): void {
+    const {
+      ifbName,
+      weCreatedIfb,
+      ifbRootQdiscHandle,
+      ifbClassId,
+      ifbNetemHandle,
+      ingressFilterPrio,
+      ifbFilterPrio,
+      ports,
+    } = ingress;
+
+    const totalPortFilters = ports.tcp.length + ports.udp.length;
+    for (let i = 0; i < totalPortFilters; i++) {
+      try {
+        runSudoCommandSync('tc', [
+          'filter', 'del', 'dev', iface, 'parent', 'ffff:',
+          'prio', (ingressFilterPrio + i).toString()
+        ]);
+      } catch {
+        // Filter may already be gone
+      }
+    }
+
+    try {
+      runSudoCommandSync('tc', [
+        'qdisc', 'del', 'dev', ifbName, 'parent', ifbClassId, 'handle', ifbNetemHandle
+      ]);
+    } catch {
+      // Netem may not exist
+    }
+
+    try {
+      runSudoCommandSync('tc', [
+        'filter', 'del', 'dev', ifbName, 'parent', ifbRootQdiscHandle,
+        'prio', ifbFilterPrio.toString()
+      ]);
+    } catch {
+      // Filter may already be gone
+    }
+
+    try {
+      runSudoCommandSync('tc', [
+        'class', 'del', 'dev', ifbName, 'parent', ifbRootQdiscHandle, 'classid', ifbClassId
+      ]);
+    } catch {
+      // Class may already be gone
+    }
+
+    try {
+      const classesResult = runSudoCommandSync('tc', ['class', 'show', 'dev', ifbName, 'parent', ifbRootQdiscHandle]);
+      const classCount = (classesResult.stdout.match(/class\s+\S+:\d+/g) || []).length;
+
+      if (classCount <= 1) {
+        runSudoCommandSync('tc', ['qdisc', 'del', 'dev', ifbName, 'root']);
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (weCreatedIfb) {
+      try {
+        const result = runSudoCommandSync('tc', ['qdisc', 'show', 'dev', ifbName, 'root']);
+        if (!result.stdout.trim()) {
+          runSudoCommandSync('ip', ['link', 'set', 'down', 'dev', ifbName]);
+          runSudoCommandSync('ip', ['link', 'del', ifbName]);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    try {
+      const ingressQdiscResult = runSudoCommandSync('tc', ['qdisc', 'show', 'dev', iface, 'ingress']);
+      const filtersResult = runSudoCommandSync('tc', ['filter', 'show', 'dev', iface, 'parent', 'ffff:']);
+
+      if (ingressQdiscResult.stdout.includes('ingress') && !filtersResult.stdout.trim()) {
+        runSudoCommandSync('tc', ['qdisc', 'del', 'dev', iface, 'ingress']);
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  private cleanupCgroupSync(cgroupPath: string, net_clsPath: string, pids: number[]): void {
+    try {
+      const procsResult = runSudoCommandSync('cat', [`${cgroupPath}/cgroup.procs`]);
+      const procs = procsResult.stdout.trim().split('\n').filter(Boolean);
+
+      for (const proc of procs) {
+        try {
+          runSudoCommandSync('bash', ['-c', `echo ${proc} >> ${net_clsPath}/cgroup.procs`]);
+        } catch {
+          // Process may have exited
+        }
+      }
+    } catch {
+      // Cgroup may already be gone
+    }
+
+    try {
+      runSudoCommandSync('rmdir', [cgroupPath]);
     } catch {
       // Cgroup may not be empty or already removed
     }

@@ -2,6 +2,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { Backend, NetworkProfile, Platform } from '../types';
 import {
   runSudoCommand,
+  runSudoCommandSync,
   bpsToRate,
   msToTime,
   percentToString,
@@ -246,6 +247,51 @@ export class DarwinBackend implements Backend {
     try {
       await runSudoCommand('dnctl', ['pipe', pipeNumber.toString(), 'delete']);
     } catch (e) {
+      // Ignore cleanup errors
+    }
+
+    this.releasePipeNumber(pipeNumber);
+    this.config = null;
+  }
+
+  cleanupSync(): void {
+    if (!this.config) {
+      return;
+    }
+
+    const { pipeNumber, pfRulesFile, originalPfEnabled } = this.config;
+
+    try {
+      if (existsSync(pfRulesFile)) {
+        try {
+          unlinkSync(pfRulesFile);
+        } catch {
+          // Ignore
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    try {
+      if (!originalPfEnabled) {
+        runSudoCommandSync('pfctl', ['-d']);
+      } else {
+        runSudoCommandSync('pfctl', ['-f', '/etc/pf.conf']);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    try {
+      runSudoCommandSync('dnctl', ['-q', 'flush']);
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    try {
+      runSudoCommandSync('dnctl', ['pipe', pipeNumber.toString(), 'delete']);
+    } catch {
       // Ignore cleanup errors
     }
 

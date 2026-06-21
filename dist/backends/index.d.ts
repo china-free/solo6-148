@@ -11,6 +11,7 @@ export declare class BackendManager {
     getPlatform(): Platform;
     apply(pid: number, profile: NetworkProfile): Promise<void>;
     cleanup(): Promise<void>;
+    cleanupSync(): void;
     checkRoot(): Promise<boolean>;
     getPlatformDescription(): string;
 }

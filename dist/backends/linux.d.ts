@@ -27,4 +27,10 @@ export declare class LinuxBackend implements Backend {
     private cleanupEgress;
     private cleanupIngress;
     private cleanupCgroup;
+    cleanupSync(): void;
+    private logCleanupError;
+    private cleanupIptablesSync;
+    private cleanupEgressSync;
+    private cleanupIngressSync;
+    private cleanupCgroupSync;
 }

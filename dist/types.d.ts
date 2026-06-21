@@ -44,6 +44,7 @@ export interface Backend {
     isAvailable(): Promise<boolean>;
     apply(pid: number, profile: NetworkProfile): Promise<void>;
     cleanup(): Promise<void>;
+    cleanupSync(): void;
     checkRoot(): Promise<boolean>;
 }
 export interface CLIOptions {

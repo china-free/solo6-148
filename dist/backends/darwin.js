@@ -186,6 +186,50 @@ class DarwinBackend {
         this.releasePipeNumber(pipeNumber);
         this.config = null;
     }
+    cleanupSync() {
+        if (!this.config) {
+            return;
+        }
+        const { pipeNumber, pfRulesFile, originalPfEnabled } = this.config;
+        try {
+            if ((0, fs_1.existsSync)(pfRulesFile)) {
+                try {
+                    (0, fs_1.unlinkSync)(pfRulesFile);
+                }
+                catch {
+                    // Ignore
+                }
+            }
+        }
+        catch {
+            // Ignore
+        }
+        try {
+            if (!originalPfEnabled) {
+                (0, utils_1.runSudoCommandSync)('pfctl', ['-d']);
+            }
+            else {
+                (0, utils_1.runSudoCommandSync)('pfctl', ['-f', '/etc/pf.conf']);
+            }
+        }
+        catch {
+            // Ignore cleanup errors
+        }
+        try {
+            (0, utils_1.runSudoCommandSync)('dnctl', ['-q', 'flush']);
+        }
+        catch {
+            // Ignore cleanup errors
+        }
+        try {
+            (0, utils_1.runSudoCommandSync)('dnctl', ['pipe', pipeNumber.toString(), 'delete']);
+        }
+        catch {
+            // Ignore cleanup errors
+        }
+        this.releasePipeNumber(pipeNumber);
+        this.config = null;
+    }
 }
 exports.DarwinBackend = DarwinBackend;
 DarwinBackend.PIPE_START = 1000;

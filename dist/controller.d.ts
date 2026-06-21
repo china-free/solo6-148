@@ -32,6 +32,8 @@ export declare class NetworkController {
     setSignalHandler(handler: SignalHandler): void;
     handleSignal(): Promise<void>;
     cleanup(): Promise<void>;
+    cleanupSync(): void;
+    emergencyRestoreSync(): boolean;
     getActiveConfig(): {
         pid: number | null;
         profile: NetworkProfile | null;

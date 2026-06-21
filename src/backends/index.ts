@@ -63,6 +63,12 @@ export class BackendManager {
     }
   }
 
+  cleanupSync(): void {
+    if (this.backend) {
+      this.backend.cleanupSync();
+    }
+  }
+
   async checkRoot(): Promise<boolean> {
     if (!this.backend) {
       return false;

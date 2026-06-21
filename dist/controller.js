@@ -122,6 +122,31 @@ class NetworkController {
             this.activePid = null;
         }
     }
+    cleanupSync() {
+        try {
+            this.backendManager.cleanupSync();
+        }
+        finally {
+            this.activeProfile = null;
+            this.activePid = null;
+        }
+    }
+    emergencyRestoreSync() {
+        try {
+            this.cleanupSync();
+            return true;
+        }
+        catch (e) {
+            try {
+                const msg = e instanceof Error ? e.message : String(e);
+                process.stderr.write(`[netslim] FATAL: emergency restore failed: ${msg}\n`);
+            }
+            catch {
+                // Swallow
+            }
+            return false;
+        }
+    }
     getActiveConfig() {
         return {
             pid: this.activePid,

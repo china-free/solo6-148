@@ -4,9 +4,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const commander_1 = require("commander");
 const controller_1 = require("./controller");
 const signals_1 = require("./signals");
+const controller = new controller_1.NetworkController();
+const signalHandler = new signals_1.SignalHandler(controller);
+signalHandler.setup();
 async function main() {
     const program = new commander_1.Command();
-    const controller = new controller_1.NetworkController();
     program
         .name('netslim')
         .description('PID-based process-level network simulation CLI')
@@ -28,15 +30,15 @@ async function main() {
     const options = program.opts();
     if (options.list) {
         await listProfiles(controller);
-        return;
+        process.exit(0);
     }
     if (options.showProfile) {
         await showProfile(controller, options.showProfile);
-        return;
+        process.exit(0);
     }
     if (options.checkPid) {
         await checkPid(controller, options.checkPid);
-        return;
+        process.exit(0);
     }
     if (!options.pid || !options.profile) {
         console.error('❌ Error: --pid and --profile are required');
@@ -119,8 +121,6 @@ async function runThrottling(controller, options) {
     console.log('🚀 NetSlim - Process-Level Network Simulation');
     console.log(`   Platform: ${controller.getPlatform()}`);
     console.log('');
-    const signalHandler = new signals_1.SignalHandler(controller);
-    signalHandler.setup();
     const status = await controller.getProcessStatus(options.pid);
     if (!status) {
         console.error(`❌ Process ${options.pid} does not exist`);
@@ -148,12 +148,21 @@ async function runThrottling(controller, options) {
             console.log(`⏱️  Running for ${duration} seconds...`);
             await controller.runWithDuration(options.pid, profileName, duration, options);
             console.log(`✅ Completed after ${duration} seconds`);
+            try {
+                controller.cleanupSync();
+                console.log('✅ Network configuration restored.');
+            }
+            catch (e) {
+                console.error('⚠️  Warning: error during final cleanup:', e instanceof Error ? e.message : String(e));
+            }
+            process.exit(0);
         }
         else {
             await controller.applyProfile(options.pid, profileName, options);
             console.log('✅ Network simulation active');
             console.log('');
             console.log('📝 Press Ctrl+C to stop and restore network');
+            console.log('   (Press Ctrl+C 3 times to force exit without cleanup)');
             console.log('');
             const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
             let i = 0;
@@ -167,16 +176,25 @@ async function runThrottling(controller, options) {
         }
     }
     catch (error) {
-        console.error('❌ Error:', error instanceof Error ? error.message : String(error));
-        await controller.cleanup();
+        console.error('\n❌ Error:', error instanceof Error ? error.message : String(error));
+        try {
+            controller.cleanupSync();
+            console.log('✅ Emergency cleanup completed.');
+        }
+        catch (e) {
+            console.error('⚠️  FATAL: Emergency cleanup FAILED! Run manual commands to restore.');
+        }
         process.exit(1);
-    }
-    finally {
-        signalHandler.remove();
     }
 }
 main().catch((error) => {
-    console.error('❌ Fatal error:', error instanceof Error ? error.message : String(error));
+    console.error('\n❌ Fatal error in main():', error instanceof Error ? error.message : String(error));
+    try {
+        controller.cleanupSync();
+    }
+    catch {
+        // Already in catch, do nothing more
+    }
     process.exit(1);
 });
 //# sourceMappingURL=cli.js.map

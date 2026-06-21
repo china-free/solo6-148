@@ -53,6 +53,11 @@ class BackendManager {
             await this.backend.cleanup();
         }
     }
+    cleanupSync() {
+        if (this.backend) {
+            this.backend.cleanupSync();
+        }
+    }
     async checkRoot() {
         if (!this.backend) {
             return false;

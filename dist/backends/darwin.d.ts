@@ -17,4 +17,5 @@ export declare class DarwinBackend implements Backend {
     private createPfRules;
     private applyPfRules;
     cleanup(): Promise<void>;
+    cleanupSync(): void;
 }
